@@ -21,6 +21,7 @@ def default_resource_graph(names):
     """
     from sqlmodel import Session, SQLModel, create_engine, select
 
+    from app.db.database import _overall_agent_id
     from app.db.models import AgentProfile
     from app.db.staffdeck_seed import TENANT_ID, seed_staffdeck_admin_gallery
 
@@ -30,6 +31,11 @@ def default_resource_graph(names):
     try:
         SQLModel.metadata.create_all(engine)
         with Session(engine) as db:
+            # The seed only publishes gallery bindings when the overall agent
+            # exists; runtime migrations create it, so mirror that here.
+            db.add(AgentProfile(id=_overall_agent_id(TENANT_ID), tenant_id=TENANT_ID,
+                                name='整体智能体', description='全局资源池', is_overall=True))
+            db.flush()
             seed_staffdeck_admin_gallery(db, include_expanded=False)
             db.flush()
             ids = [row.id for row in db.exec(select(AgentProfile)).all()

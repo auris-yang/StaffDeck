@@ -40,8 +40,14 @@ def test_fresh_oss_admin_and_five_owned_employees_are_initialized_once(tmp_path,
         initialize_defaults(db, manifest)
         user = db.exec(select(User)).one()
         assert user.username == 'admin' and verify_password('admin', user.password_hash)
-        employees = db.exec(select(AgentProfile)).all()
+        employees = db.exec(select(AgentProfile).where(AgentProfile.is_overall.is_(False))).all()
         assert {row.name for row in employees} == {'IT', '人事', '行政', '财务', '法务'}
+        overall = db.exec(select(AgentProfile).where(AgentProfile.is_overall.is_(True))).one()
+        for resource_type in ('skill', 'knowledge_base', 'general_skill', 'tool'):
+            assert db.exec(select(AgentResourceBinding).where(
+                AgentResourceBinding.agent_id == overall.id,
+                AgentResourceBinding.resource_type == resource_type,
+                AgentResourceBinding.status == 'active')).all()
         assert all(row.metadata_json['owner_user_id'] == user.id
                    and row.metadata_json['owner_username'] == 'admin' for row in employees)
         assert len(db.exec(select(Skill)).all()) == 15
@@ -60,6 +66,6 @@ def test_fresh_oss_admin_and_five_owned_employees_are_initialized_once(tmp_path,
         employees[0].name = '用户改名'
         db.add(employees[0]); db.commit()
         initialize_defaults(db, manifest)
-        assert len(db.exec(select(AgentProfile)).all()) == 5
+        assert len(db.exec(select(AgentProfile)).all()) == 6
         assert db.get(AgentProfile, employees[0].id).name == '用户改名'
     engine.dispose()

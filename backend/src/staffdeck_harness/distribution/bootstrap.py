@@ -150,6 +150,7 @@ def initialize_defaults(db, manifest=None):
     from .defaults import default_resource_graph, default_staff
     staff = manifest['installation']['default_staff']
     records = (manifest.get('resources') or {}).get('records', {})
+    source_overall_ids = {(manifest.get('resources') or {}).get('overall_agent_id')} - {None}
     if manifest['assembly'].get('security_profile') == 'OSS_LOCAL' and not external_auth:
         defaults = default_staff()
         keys = {row['key'] for row in staff}
@@ -157,7 +158,10 @@ def initialize_defaults(db, manifest=None):
         staff = [row for row in defaults if row['key'] not in keys and row['name'] not in names] + staff
         exported_names = {row['name'] for row in records.get('AgentProfile', [])}
         builtin_names = {row['name'] for row in staff if row in defaults} - exported_names
-        builtin = default_resource_graph(builtin_names)['records'] if builtin_names else {}
+        builtin_graph = default_resource_graph(builtin_names) if builtin_names else {}
+        builtin = builtin_graph.get('records', {})
+        if builtin_graph.get('overall_agent_id'):
+            source_overall_ids.add(builtin_graph['overall_agent_id'])
         # Explicit employee exports take precedence over a matching starter ID.
         records = {name: list({row['id']: row for row in [*builtin.get(name, []),
                                   *records.get(name, [])]}.values())
@@ -165,10 +169,27 @@ def initialize_defaults(db, manifest=None):
     for name in records:
         if name not in RESOURCE_MODELS:
             raise ValueError('Unknown default resource type')
+    overall_agent = None
+    gallery_bindings_seen = set()
     for name, model in RESOURCE_MODELS.items():
         for raw in records.get(name, []):
             value = dict(raw)
             value['tenant_id'] = tenant_id
+            if name == 'AgentResourceBinding' and value.get('agent_id') in source_overall_ids:
+                key = (value['resource_type'], value['resource_id'])
+                if key in gallery_bindings_seen:
+                    continue
+                gallery_bindings_seen.add(key)
+                if overall_agent is None:
+                    overall_agent = db.exec(select(M.AgentProfile).where(
+                        M.AgentProfile.tenant_id == tenant_id, M.AgentProfile.is_overall.is_(True))).first()
+                if overall_agent is None:
+                    from app.db.database import _overall_agent_id
+                    overall_agent = M.AgentProfile(id=_overall_agent_id(tenant_id), tenant_id=tenant_id,
+                                                   name='整体智能体', description='全局资源池', is_overall=True)
+                    db.add(overall_agent)
+                    db.flush()
+                value['agent_id'] = overall_agent.id
             if 'metadata_json' in value:
                 meta = dict(value['metadata_json'] or {})
                 for key in ('owner_user_id', 'created_by_user_id', 'creator_user_id', 'gallery_published_by'):

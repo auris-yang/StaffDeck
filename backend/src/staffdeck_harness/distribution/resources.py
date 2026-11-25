@@ -53,6 +53,16 @@ def export_local(db, tenant_id, employee_ids):
         for row in selected(model, agent_id=employee_ids):
             add(row)
 
+    # The overall agent itself is per-tenant and never shipped, but its public
+    # gallery bindings are the plaza content; import remaps them via overall_agent_id.
+    from app.agents.branching import _binding_is_private
+    overall = db.exec(select(M.AgentProfile).where(
+        M.AgentProfile.tenant_id == tenant_id, M.AgentProfile.is_overall.is_(True))).first()
+    if overall:
+        for row in selected(M.AgentResourceBinding, agent_id=[overall.id]):
+            if row.status != 'deleted' and not _binding_is_private(row):
+                add(row)
+
     seen = set()
     def resource(kind, identifier):
         # The shipped Feishu wrapper is a builtin, never a row containing credentials.
@@ -128,6 +138,7 @@ def export_local(db, tenant_id, employee_ids):
             records[name].append(value)
     persona = db.get(M.PersonaConfig, tenant_id)
     return {'schema_version': 1, 'records': records, 'persona_prompt': persona.system_prompt if persona else '',
+            'overall_agent_id': overall.id if overall else None,
             'required_configuration': sorted(set(required))}
 
 
